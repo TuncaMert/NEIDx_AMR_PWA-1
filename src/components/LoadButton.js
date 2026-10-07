@@ -2,7 +2,7 @@ import React from 'react';
 import { Button, Spinner } from 'react-bootstrap';
 
 
-export default ({
+const LoadButton = ({
   isLoading,
   text,
   loadingText,
@@ -24,3 +24,5 @@ export default ({
     />}{' '}
     {isLoading ? loadingText : text}
   </Button>;
+
+export default LoadButton;

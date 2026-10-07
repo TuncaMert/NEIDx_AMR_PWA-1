@@ -1,0 +1,170 @@
+[
+  {
+    "path": "manifest.yml",
+    "sha256": "80237d7f4dde8b0b9faae0b8b103d15ddebe14f606bb27eefec7fe2280e4cd84"
+  },
+  {
+    "path": "model_info.txt",
+    "sha256": "09c605eb769102ebf6b3b5938120d5e8a2499442dae1cf334e02e2327f98d917"
+  },
+  {
+    "path": "package-lock.json",
+    "sha256": "31529ab54ab368cebfe93c08c17962726e693f69394526d85a7a1e89e34c4783"
+  },
+  {
+    "path": "package.json",
+    "sha256": "a9c83db74f55a144499768f0eb9be27cd497d6405db9bc30e5215bb3abcc0186"
+  },
+  {
+    "path": "public/images/apple-touch-icon.png",
+    "sha256": "cd1737f72fb6faa43a63201edc094e78f039e86d45590ecaa1d09b507996d8d1"
+  },
+  {
+    "path": "public/images/favicon.ico",
+    "sha256": "5080cc13e85e5a417a2f160947cf66caf6edb9551640f6235719ead6cc45b80e"
+  },
+  {
+    "path": "public/images/icon-152.png",
+    "sha256": "46cb760000d677b51dc4e03f1ace848aa8ff0882934d70a19d0419ca524b29e4"
+  },
+  {
+    "path": "public/images/icon-192.png",
+    "sha256": "9e1b414cecb5c37f0386679b187c13b834b6a67f7bd3499218aa81b5a3c1f61b"
+  },
+  {
+    "path": "public/images/icon-512.png",
+    "sha256": "574df70c6099eebba5180b123797ad78c108fcd88dbe66bcff6f341df2af6e51"
+  },
+  {
+    "path": "public/index.html",
+    "sha256": "beb0b56b0306a146fcc8ddd6732a2540af0a38deb46ab14b7d4371100e9d9928"
+  },
+  {
+    "path": "public/manifest.json",
+    "sha256": "f2f73ad04cda9035a73ddaee85d98ed01cde58260fdd559df45375105fb81683"
+  },
+  {
+    "path": "public/model/README.md",
+    "sha256": "437dae2661003b37fbcbb07a65994110b3af6a02d5f4145d9e2d3519427da16d"
+  },
+  {
+    "path": "public/model/group1-shard1of4.bin",
+    "sha256": "d697f07703ef03a85b29bd3371fe763da87fe09af183be4f98faa1f67eeca2c5"
+  },
+  {
+    "path": "public/model/group1-shard2of4.bin",
+    "sha256": "c2d678e8d7f6ca18627778c7d90ff0bef393f2f2f2e91929878bcb57213ecf57"
+  },
+  {
+    "path": "public/model/group1-shard3of4.bin",
+    "sha256": "0ce75ded346b0055556e7341af256af4021db1c318b57f6cbe12352632756342"
+  },
+  {
+    "path": "public/model/group1-shard4of4.bin",
+    "sha256": "754a4e766fa176e2b8450e4a09948176cc5792fb9f8266cb55021028211b4984"
+  },
+  {
+    "path": "public/model/model.json",
+    "sha256": "92ebcc25121fc0aa697cc65a06d8fd85ea2c493662121a056d15b1c4ba5cf295"
+  },
+  {
+    "path": "public/service-worker.js",
+    "sha256": "b757a862e7f798edb6c48627fe7b7cf616ad773d71405de654cd97aa4c112b62"
+  },
+  {
+    "path": "public/yolov8_model/group1-shard1of3.bin",
+    "sha256": "cf73a3fe8145ed807eabf8e5af2ac76b18a50040dc7053a6420304e1e6f5c81d"
+  },
+  {
+    "path": "public/yolov8_model/group1-shard2of3.bin",
+    "sha256": "19f4856c6f2785c59f3a5c62312d2b016cb8dc5962ed4a0045217552e5426c40"
+  },
+  {
+    "path": "public/yolov8_model/group1-shard3of3.bin",
+    "sha256": "26f185f1df5bee482cf6528e473ee5c47809196d54055e55117be564c6b553da"
+  },
+  {
+    "path": "public/yolov8_model/metadata.yaml",
+    "sha256": "9867b864a0acd76012681c0d030a7a8e2bb113e8986cf7c1d92732e903a197fc"
+  },
+  {
+    "path": "public/yolov8_model/model.json",
+    "sha256": "136e3aa40883453abfcc1d8d90df84a8024ec1e0c532cd35c74f609790b33df8"
+  },
+  {
+    "path": "server.js",
+    "sha256": "9a3c053d02125e087269ac2a93293a29160412bca609a4651b8107d26dabd13b"
+  },
+  {
+    "path": "src/App.css",
+    "sha256": "94f82f7a5a4d1d3e048f4cceb6dcc55d915e32e27420b12ca1540ee42ec57c83"
+  },
+  {
+    "path": "src/App.js",
+    "sha256": "5c8f1c194324c90fd86c21c88547a77696e6b699094f9dec3aaf75423e5996f7"
+  },
+  {
+    "path": "src/App.test.js",
+    "sha256": "7bbcd0070c2926c2aa6c387154906d331eccdfbff98f81a59e985eb68c37650e"
+  },
+  {
+    "path": "src/Routes.js",
+    "sha256": "74e71d1321ce919f6de2d25ba501b6efd3488d69cb90085814c72f07d65a2c59"
+  },
+  {
+    "path": "src/components/AlertDismissable.js",
+    "sha256": "717899a3bf3a716a703f946bd6907760720de4de2ae0b9fe1b9f423045ff07d0"
+  },
+  {
+    "path": "src/components/LoadButton.js",
+    "sha256": "63179492835e8cef6d2b113696725fd9de75e75577607c380aa10a67a1ec1647"
+  },
+  {
+    "path": "src/config.js",
+    "sha256": "47c63d0a27f237d7d4708711dabfa15f88fc332ed48a5a3a0aac62e85b83ca82"
+  },
+  {
+    "path": "src/index.css",
+    "sha256": "f0124a3db6c0feba7a476c3a0533654e1557498f853d82613f59d4a20759f25e"
+  },
+  {
+    "path": "src/index.js",
+    "sha256": "d270374d21d529937c0bdc8a5bf1cea864a7f05e8f5151b4c08625565a182071"
+  },
+  {
+    "path": "src/model/classes.js",
+    "sha256": "d16e4591b9e95acb604ec89d5be41d4195167762becd7b648b12aede6e0e62cf"
+  },
+  {
+    "path": "src/model/labels.json",
+    "sha256": "42749bd2dda3ceda0d94bca46d6818ade644f2935b5d02e8b5314a2704ba604f"
+  },
+  {
+    "path": "src/pages/Classify.css",
+    "sha256": "d09c8cadad912190a6c427ba448a9f9d7198abf73358d5fbc991bc00656ead76"
+  },
+  {
+    "path": "src/pages/Classify.js",
+    "sha256": "b73795785f8aed82fdeae5bb83696c8b57b62ac10089da1ecf17d04de799ed4c"
+  },
+  {
+    "path": "src/pages/NotFound.css",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "src/pages/NotFound.js",
+    "sha256": "b7d16d62f7eafe7616273c7fa5142db5bbef882d4e54b07afae57d9c88f21183"
+  },
+  {
+    "path": "src/serviceWorker.js",
+    "sha256": "dd8f9183ecacf50a4c2607470768be63a9a5865443dd381278e22baa1175810d"
+  },
+  {
+    "path": "yarn.lock",
+    "sha256": "fbd00e42c2a5baf22b2e9c7dbb219a641f85d8b099cd47ff18bbca188f5c9cd5"
+  },
+  {
+    "path": "yolo_model_info.txt",
+    "sha256": "5512a89c4bdbab5db082fc4db580246cdf6dc7651621a233ec0691d495ae802a"
+  }
+]

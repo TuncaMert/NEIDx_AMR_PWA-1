@@ -1,0 +1,2084 @@
+--- original/netlify.toml
++++ refactored/netlify.toml
+@@ -0,0 +1,3 @@
++[build]
++  command = "npm run build"
++  publish = "build"
+--- original/package.json
++++ refactored/package.json
+@@ -24,7 +24,7 @@
+   "scripts": {
+     "start": "react-scripts start",
+     "start-dev": "concurrently --kill-others-on-fail \"node server.js\" \"yarn start\"",
+-    "build": "react-scripts build",
++    "build": "react-scripts build && node scripts/build-service-worker.cjs",
+     "test": "react-scripts test",
+     "eject": "react-scripts eject",
+     "start-prod": "node server.js",
+--- original/public/_headers
++++ refactored/public/_headers
+@@ -0,0 +1,4 @@
++/service-worker.js
++  Cache-Control: no-cache, no-store, must-revalidate
++/index.html
++  Cache-Control: no-cache
+--- original/public/_redirects
++++ refactored/public/_redirects
+@@ -0,0 +1 @@
++/* /index.html 200
+--- original/public/service-worker.js
++++ refactored/public/service-worker.js
+@@ -1,106 +0,0 @@
+-
+-const isLocalhost = Boolean(
+-  window.location.hostname === 'localhost' ||
+-    window.location.hostname === '[::1]' ||
+-    window.location.hostname.match(
+-      /^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/
+-    )
+-);
+-
+-export function register(config) {
+-  if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
+-    const publicUrl = new URL(process.env.PUBLIC_URL, window.location.href);
+-    if (publicUrl.origin !== window.location.origin) {
+-      return;
+-    }
+-
+-    window.addEventListener('load', () => {
+-      const swUrl = `${process.env.PUBLIC_URL}/service-worker.js`;
+-      // const swUrl = `/serviceWorker.js`;
+-
+-      if (isLocalhost) {
+-        checkValidServiceWorker(swUrl, config);
+-
+-        navigator.serviceWorker.ready.then(() => {
+-          console.log(
+-            'Service Worker is working '
+-          );
+-        });
+-      } else {
+-        registerValidSW(swUrl, config);
+-      }
+-    });
+-  }
+-}
+-
+-function registerValidSW(swUrl, config) {
+-  navigator.serviceWorker
+-    .register(swUrl)
+-    .then(registration => {
+-      if (registration.waiting && registration.active) {
+-        newerSwAvailable(registration.waiting);
+-      }
+-      registration.onupdatefound = () => {
+-        const installingWorker = registration.installing;
+-        if (installingWorker == null) {
+-          return;
+-        }
+-        installingWorker.onstatechange = () => {
+-          if (installingWorker.state === 'installed') {
+-            if (navigator.serviceWorker.controller) {
+-              newerSwAvailable(installingWorker);
+-            } else {
+-              console.log('Content is saved for offline use.');
+-
+-              if (config && config.onSuccess) {
+-                config.onSuccess(registration);
+-              }
+-            }
+-          }
+-        };
+-      };
+-      function newerSwAvailable(sw){
+-        console.log(
+-          'New update is available ' 
+-        );
+-        if (config && config.onUpdate) {
+-          config.onUpdate(registration, sw);
+-        }
+-      }
+-    })
+-    .catch(error => {
+-      console.error('Error Service Worker Registration:', error);
+-    });
+-}
+-
+-function checkValidServiceWorker(swUrl, config) {
+-  fetch(swUrl)
+-    .then(response => {
+-      const contentType = response.headers.get('content-type');
+-      if (
+-        response.status === 404 ||
+-        (contentType != null && contentType.indexOf('javascript') === -1)
+-      ) {
+-        navigator.serviceWorker.ready.then(registration => {
+-          registration.unregister().then(() => {
+-            window.location.reload();
+-          });
+-        });
+-      } else {
+-        registerValidSW(swUrl, config);
+-      }
+-    })
+-    .catch(() => {
+-      console.log(
+-        'Offline mode.'
+-      );
+-    });
+-}
+-
+-export function unregister() {
+-  if ('serviceWorker' in navigator) {
+-    navigator.serviceWorker.ready.then(registration => {
+-      registration.unregister();
+-    });
+-  }
+-}
+--- original/scripts/build-service-worker.cjs
++++ refactored/scripts/build-service-worker.cjs
+@@ -0,0 +1,26 @@
++// Generate an offline cache from the exact production files, including weights.
++const fs = require('fs');
++const path = require('path');
++const crypto = require('crypto');
++const build = path.join(__dirname, '..', 'build');
++function walk(directory) {
++  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
++    const file = path.join(directory, entry.name);
++    return entry.isDirectory() ? walk(file) : [file];
++  });
++}
++const assets = walk(build).filter(file => {
++  const relative = path.relative(build, file).split(path.sep).join('/');
++  return relative === 'index.html' || relative === 'manifest.json' ||
++    /^(static|images|model|yolov8_model)\//.test(relative) && /\.(js|css|json|bin|png|ico|woff2?|ttf|svg)$/.test(relative);
++}).sort();
++const hash = crypto.createHash('sha256');
++for (const file of assets) hash.update(path.relative(build, file)).update(fs.readFileSync(file));
++const template = fs.readFileSync(path.join(__dirname, 'service-worker.template.js'), 'utf8');
++hash.update(template);
++const version = hash.digest('hex').slice(0, 20);
++const urls = assets.map(file => '/' + path.relative(build, file).split(path.sep).join('/'));
++fs.writeFileSync(path.join(build, 'service-worker.js'), template
++  .replace('__CACHE_NAME__', JSON.stringify('neidx-offline-' + version))
++  .replace('__ASSET_URLS__', JSON.stringify(urls)));
++console.log(`Offline worker generated: ${urls.length} resources, ${(assets.reduce((sum, file) => sum + fs.statSync(file).size, 0) / 1024 / 1024).toFixed(1)} MB.`);
+--- original/scripts/service-worker.template.js
++++ refactored/scripts/service-worker.template.js
+@@ -0,0 +1,58 @@
++/* Generated during npm run build. Do not edit the copy in build/. */
++const CACHE_NAME = __CACHE_NAME__;
++const ASSETS = __ASSET_URLS__;
++const ASSET_SET = new Set(ASSETS);
++
++self.addEventListener('install', event => {
++  event.waitUntil((async () => {
++    const cache = await caches.open(CACHE_NAME);
++    try {
++      // Do not activate a partly downloaded release or Netlify's HTML fallback
++      // masquerading as a missing model or script.
++      for (const url of ASSETS) {
++        const response = await fetch(new Request(url, { cache: 'reload' }));
++        if (!response.ok || (url !== '/index.html' &&
++          (response.headers.get('content-type') || '').includes('text/html'))) {
++          throw new Error(`Offline download failed: ${url}`);
++        }
++        await cache.put(url, response);
++      }
++    } catch (error) {
++      await caches.delete(CACHE_NAME);
++      throw error;
++    }
++    // Updates wait for all existing tabs to close to avoid mixing releases.
++  })());
++});
++
++self.addEventListener('activate', event => {
++  event.waitUntil((async () => {
++    for (const name of await caches.keys()) {
++      if (name.startsWith('neidx-offline-') && name !== CACHE_NAME) await caches.delete(name);
++    }
++    await self.clients.claim();
++  })());
++});
++
++self.addEventListener('fetch', event => {
++  const request = event.request;
++  const url = new URL(request.url);
++  if (request.method !== 'GET' || url.origin !== self.location.origin) return;
++  const key = request.mode === 'navigate' ? '/index.html' : url.pathname;
++  if (!ASSET_SET.has(key)) return;
++  event.respondWith((async () => {
++    const cache = await caches.open(CACHE_NAME);
++    const response = await cache.match(key);
++    return response || fetch(request);
++  })());
++});
++
++self.addEventListener('message', event => {
++  if (event.data && event.data.type === 'OFFLINE_STATUS' && event.ports[0]) {
++    event.waitUntil((async () => {
++      const cache = await caches.open(CACHE_NAME);
++      const resources = await Promise.all(ASSETS.map(url => cache.match(url)));
++      event.ports[0].postMessage({ ready: resources.every(Boolean) });
++    })());
++  }
++});
+--- original/scripts/smoke_models.cjs
++++ refactored/scripts/smoke_models.cjs
+@@ -0,0 +1,43 @@
++/* Executes bundled models on synthetic inputs; this is not an accuracy test. */
++const fs = require('fs');
++const path = require('path');
++const tf = require('@tensorflow/tfjs');
++
++function artifacts(folder) {
++  const spec = JSON.parse(fs.readFileSync(path.join(folder, 'model.json'), 'utf8'));
++  const buffers = spec.weightsManifest.flatMap(group => group.paths.map(file => fs.readFileSync(path.join(folder, file))));
++  const data = Buffer.concat(buffers);
++  return {
++    modelTopology: spec.modelTopology,
++    weightSpecs: spec.weightsManifest.flatMap(group => group.weights),
++    weightData: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
++    format: spec.format,
++    signature: spec.signature,
++  };
++}
++
++async function main() {
++  await tf.setBackend('cpu');
++  for (const [folder, load, shape] of [
++    ['model', tf.loadLayersModel, [1, 224, 224, 3]],
++    ['yolov8_model', tf.loadGraphModel, [1, 640, 640, 3]],
++  ]) {
++    let model, input, output;
++    try {
++      model = await load(tf.io.fromMemory(artifacts(path.join(__dirname, '..', 'public', folder))));
++      input = tf.zeros(shape);
++      output = model.predict(input);
++      const outputs = Array.isArray(output) ? output : [output];
++      for (const tensor of outputs) {
++        const values = await tensor.data();
++        if (!values.every(Number.isFinite)) throw new Error(`${folder}: nonfinite output`);
++        console.log(`${folder}: input ${shape}, output ${tensor.shape}; all values finite`);
++      }
++    } finally {
++      tf.dispose([input, output].filter(Boolean));
++      if (model) model.dispose();
++    }
++  }
++  console.log('Synthetic model execution passed. This does not establish prediction accuracy.');
++}
++main().catch(error => { console.error(error); process.exitCode = 1; });
+--- original/scripts/test-offline.cjs
++++ refactored/scripts/test-offline.cjs
+@@ -0,0 +1,85 @@
++// Exercise the generated worker with real build files and an in-memory Cache API.
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const build = path.join(__dirname, '..', 'build');
++const origin = 'https://neidx.test';
++function harness(missing = '') {
++  const handlers = {};
++  const stores = new Map([['unrelated-cache', new Map()], ['neidx-offline-old', new Map()]]);
++  let online = true;
++  const caches = {
++    async open(name) {
++      if (!stores.has(name)) stores.set(name, new Map());
++      const store = stores.get(name);
++      return {
++        async put(key, response) { store.set(key, response.clone()); },
++        async match(key) { return store.get(key)?.clone(); },
++      };
++    },
++    async keys() { return [...stores.keys()]; },
++    async delete(name) { return stores.delete(name); },
++  };
++  const context = {
++    self: { location: { origin }, clients: { claim: async () => {} },
++      addEventListener: (type, handler) => { handlers[type] = handler; } },
++    caches, URL, Set, Promise,
++    Request: class extends Request { constructor(url, options) { super(new URL(url, origin), options); } },
++    fetch: async request => {
++      if (!online) throw new Error('Network disconnected');
++      const url = new URL(request.url);
++      if (url.pathname === missing) return new Response('<html>Fallback</html>', { headers: { 'content-type': 'text/html' } });
++      return new Response(fs.readFileSync(path.join(build, url.pathname)), {
++        headers: { 'content-type': url.pathname.endsWith('.html') ? 'text/html' : 'application/octet-stream' },
++      });
++    },
++  };
++  vm.runInNewContext(fs.readFileSync(path.join(build, 'service-worker.js'), 'utf8'), context);
++  return {
++    stores,
++    offline() { online = false; },
++    async dispatch(type, fields = {}) {
++      let promise;
++      handlers[type]({ ...fields, waitUntil(value) { promise = value; }, respondWith(value) { promise = value; } });
++      return promise;
++    },
++  };
++}
++async function main() {
++  const app = harness();
++  await app.dispatch('install');
++  assert(app.stores.has('neidx-offline-old'), 'Installing update must preserve active version');
++  await app.dispatch('activate');
++  assert(!app.stores.has('neidx-offline-old'));
++  assert(app.stores.has('unrelated-cache'));
++  app.offline();
++  const page = await app.dispatch('fetch', { request: { method: 'GET', url: origin + '/?review=1', mode: 'navigate' } });
++  assert((await page.text()).includes('<title>NEIDx</title>'));
++  const manifest = JSON.parse(fs.readFileSync(path.join(build, 'asset-manifest.json')));
++  const urls = [manifest.files['main.js'], manifest.files['main.css']];
++  for (const folder of ['model', 'yolov8_model']) {
++    const spec = JSON.parse(fs.readFileSync(path.join(build, folder, 'model.json')));
++    urls.push(`/${folder}/model.json`);
++    for (const group of spec.weightsManifest) for (const shard of group.paths) urls.push(`/${folder}/${shard}`);
++  }
++  for (const url of urls) {
++    const response = await app.dispatch('fetch', { request: { method: 'GET', url: origin + url, mode: 'cors' } });
++    assert(response && response.ok, url);
++    assert.deepEqual(Buffer.from(await response.arrayBuffer()), fs.readFileSync(path.join(build, url)));
++  }
++  let ready;
++  await app.dispatch('message', { data: { type: 'OFFLINE_STATUS' }, ports: [{ postMessage(value) { ready = value.ready; } }] });
++  assert.equal(ready, true);
++  console.log('PASS: offline navigation, JS/CSS, both models and all seven shards; ready confirmation and scoped cache cleanup');
++  const failed = harness('/model/model.json');
++  await assert.rejects(failed.dispatch('install'), /Offline download failed/);
++  assert.deepEqual([...failed.stores.keys()], ['unrelated-cache', 'neidx-offline-old']);
++  console.log('PASS: missing model/HTML fallback rejects installation, removes partial cache and retains previous release');
++  const disconnected = harness();
++  disconnected.offline();
++  await assert.rejects(disconnected.dispatch('install'), /Network disconnected/);
++  assert.deepEqual([...disconnected.stores.keys()], ['unrelated-cache', 'neidx-offline-old']);
++  console.log('PASS: interrupted installation does not leave a partial offline release');
++}
++main().catch(error => { console.error(error); process.exitCode = 1; });
+--- original/scripts/verify_package.py
++++ refactored/scripts/verify_package.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python3
++"""Check snapshot integrity and declared model storage, without dependencies."""
++import hashlib
++import json
++import math
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def require(condition, message):
++    if not condition:
++        raise SystemExit('FAIL: ' + message)
++
++
++def main():
++    checksum_file = ROOT / 'SHA256SUMS'
++    require(checksum_file.is_file(), 'SHA256SUMS is missing')
++    count = 0
++    for line in checksum_file.read_text().splitlines():
++        expected, relative = line.split('  ', 1)
++        path = ROOT / relative
++        require(path.is_file(), 'Missing file: ' + relative)
++        actual = hashlib.sha256(path.read_bytes()).hexdigest()
++        require(actual == expected, 'Checksum mismatch: ' + relative)
++        count += 1
++    package = json.loads((ROOT / 'package.json').read_text())
++    lock = json.loads((ROOT / 'package-lock.json').read_text())
++    for key in ('dependencies', 'devDependencies'):
++        require(package.get(key, {}) == lock['packages'][''].get(key, {}),
++                'package.json and package-lock.json differ in ' + key)
++    sizes = {'float32': 4, 'int32': 4, 'bool': 1, 'uint8': 1, 'uint16': 2}
++    for model in ('model', 'yolov8_model'):
++        folder = ROOT / 'public' / model
++        spec = json.loads((folder / 'model.json').read_text())
++        for group in spec['weightsManifest']:
++            expected = 0
++            for weight in group['weights']:
++                dtype = weight.get('quantization', {}).get('dtype', weight['dtype'])
++                require(dtype in sizes, 'Unsupported weight dtype: ' + dtype)
++                expected += math.prod(weight['shape']) * sizes[dtype]
++            paths = [folder / name for name in group['paths']]
++            require(all(p.is_file() for p in paths), 'Missing shard in ' + model)
++            actual = sum(p.stat().st_size for p in paths)
++            require(actual == expected,
++                    f'{model} weight size: expected {expected}, found {actual}')
++        print('PASS: ' + model + ' model shard sizes')
++    print(f'PASS: {count} file checksums and root dependency declarations')
++    print('Integrity checks do not execute inference or validate study results.')
++
++
++if __name__ == '__main__':
++    main()
+--- original/src/App.test.js
++++ refactored/src/App.test.js
+@@ -1,9 +1,13 @@
+ import React from 'react';
+ import ReactDOM from 'react-dom';
++import { MemoryRouter } from 'react-router-dom';
+ import App from './App';
+ 
+-it('render', () => {
+-  const div = document.createElement('div');
+-  ReactDOM.render(<App />, div);
+-  ReactDOM.unmountComponentAtNode(div);
++jest.mock('./pages/Classify', () => () => <div>Classification interface</div>);
++
++test('renders the application inside its required router', () => {
++  const container = document.createElement('div');
++  ReactDOM.render(<MemoryRouter><App updateAvailable={false} /></MemoryRouter>, container);
++  expect(container.textContent).toContain('Classification interface');
++  ReactDOM.unmountComponentAtNode(container);
+ });
+--- original/src/Routes.js
++++ refactored/src/Routes.js
+@@ -3,8 +3,10 @@
+ import Classify from './pages/Classify';
+ import NotFound from './pages/NotFound';
+ 
+-export default ({ childProps }) =>
++const Routes = ({ childProps }) =>
+   <Switch>
+     <Route path="/" exact component={Classify} props={childProps} />
+     <Route component={NotFound} />
+   </Switch>;
++
++export default Routes;
+--- original/src/components/LoadButton.js
++++ refactored/src/components/LoadButton.js
+@@ -2,7 +2,7 @@
+ import { Button, Spinner } from 'react-bootstrap';
+ 
+ 
+-export default ({
++const LoadButton = ({
+   isLoading,
+   text,
+   loadingText,
+@@ -24,3 +24,5 @@
+     />}{' '}
+     {isLoading ? loadingText : text}
+   </Button>;
++
++export default LoadButton;
+--- original/src/components/OfflineStatus.js
++++ refactored/src/components/OfflineStatus.js
+@@ -0,0 +1,8 @@
++import React, { useEffect, useState } from 'react';
++import { register } from '../serviceWorker';
++
++export default function OfflineStatus() {
++  const [status, setStatus] = useState('');
++  useEffect(() => register(setStatus), []);
++  return status ? <p className="container mt-3" role="status">{status}</p> : null;
++}
+--- original/src/config.js
++++ refactored/src/config.js
+@@ -1,3 +1,5 @@
+-export default {
++const config = {
+   API_ENDPOINT: 'http://localhost:3000/api'
+ };
++
++export default config;
+--- original/src/index.js
++++ refactored/src/index.js
+@@ -1,41 +1,12 @@
+-import React, { Component } from 'react';
++import React from 'react';
+ import ReactDOM from 'react-dom';
+-import { BrowserRouter as Router } from 'react-router-dom';
++import { BrowserRouter } from 'react-router-dom';
+ import 'bootstrap/dist/css/bootstrap.css';
+ import './index.css';
+ import App from './App';
+-import * as serviceWorker from './serviceWorker';
++import OfflineStatus from './components/OfflineStatus';
+ 
+-
+-class Index extends Component {
+-  state = {
+-    contentCached: false,
+-    updateAvailable: false,
+-  };
+-
+-  componentDidMount() {
+-    const config = {
+-      onUpdate: this.handleUpdate,
+-    };
+-    serviceWorker.register(config);
+-  }
+-
+-  render() {
+-    return (
+-      <Router>
+-        <App updateAvailable={this.state.updateAvailable} />
+-      </Router>
+-    );
+-  }
+-
+-  handleUpdate = (registration) => {
+-    const waitingServiceWorker = registration.waiting;
+-
+-    if (waitingServiceWorker) {
+-      waitingServiceWorker.postMessage({ type: 'SKIP_WAITING' });
+-    }
+-    this.setState({ updateAvailable: true});
+-  }
+-}
+-
+-ReactDOM.render(<Index />, document.getElementById('root'));
++ReactDOM.render(
++  <BrowserRouter><OfflineStatus /><App updateAvailable={false} /></BrowserRouter>,
++  document.getElementById('root')
++);
+--- original/src/inference/geometry.js
++++ refactored/src/inference/geometry.js
+@@ -0,0 +1,28 @@
++import { SETTINGS } from './settings';
++
++// Preserve the original padding and coordinate conversion, including fractional
++// upload coordinates and integer camera coordinates.
++export function getAssayCrop(box, width, height, camera = false) {
++  const ratio = Math.min(SETTINGS.detectorSize / width, SETTINGS.detectorSize / height);
++  const [top, left, bottom, right] = box;
++  const regionWidth = (right - left) / ratio;
++  const regionHeight = (bottom - top) / ratio;
++  const paddingX = regionWidth * SETTINGS.paddingRatio;
++  const paddingY = regionHeight * SETTINGS.paddingRatio;
++  const crop = {
++    x: Math.max(0, left / ratio - paddingX / 2),
++    y: Math.max(0, top / ratio - paddingY / 2),
++    width: Math.min(width, regionWidth + paddingX),
++    height: Math.min(height, regionHeight + paddingY),
++  };
++  if (camera) Object.keys(crop).forEach(key => { crop[key] = Math.trunc(crop[key]); });
++  if (Object.values(crop).some(value => !Number.isFinite(value)) || crop.width <= 0 || crop.height <= 0) {
++    throw new Error('The detected region is invalid. Try another image.');
++  }
++  // Reject the previously crashing tensor slice rather than silently changing
++  // the region supplied to the classifier.
++  if (camera && (crop.x + crop.width > width || crop.y + crop.height > height)) {
++    throw new Error('The assay is too close to the image edge. Center it and try again.');
++  }
++  return crop;
++}
+--- original/src/inference/models.js
++++ refactored/src/inference/models.js
+@@ -0,0 +1,48 @@
++import * as tf from '@tensorflow/tfjs';
++import { SETTINGS } from './settings';
++
++// Separate keys avoid models incorrectly saved by the original implementation.
++const MODEL_SPECS = [
++  { name: 'classifier', path: '/model/model.json', key: 'neidx-review-classifier-v1', load: tf.loadLayersModel },
++  { name: 'detector', path: '/yolov8_model/model.json', key: 'neidx-review-detector-v1', load: tf.loadGraphModel },
++];
++
++async function loadModel(spec, refresh) {
++  const cacheUrl = `indexeddb://${spec.key}`;
++  if (!refresh) {
++    try {
++      return await spec.load(cacheUrl);
++    } catch (_) {
++      // A missing or inaccessible cache must not prevent loading bundled files.
++    }
++  }
++  const model = await spec.load(spec.path);
++  try {
++    await model.save(cacheUrl);
++  } catch (_) {
++    // Caching is optional (for example, private browsing or a full disk).
++  }
++  return model;
++}
++
++export function disposeModels(models) {
++  if (models) Object.values(models).forEach(model => model.dispose());
++}
++
++export async function loadModels({ refresh = false } = {}) {
++  const models = {};
++  try {
++    await tf.ready();
++    for (const spec of MODEL_SPECS) {
++      models[spec.name] = await loadModel(spec, refresh);
++    }
++    tf.tidy(() => {
++      models.classifier.predict(tf.zeros([1, SETTINGS.classifierSize, SETTINGS.classifierSize, 3]));
++      models.detector.execute(tf.ones(models.detector.inputs[0].shape));
++    });
++    return models;
++  } catch (error) {
++    disposeModels(models);
++    throw error;
++  }
++}
+--- original/src/inference/models.test.js
++++ refactored/src/inference/models.test.js
+@@ -0,0 +1,51 @@
++import * as tf from '@tensorflow/tfjs';
++import { loadModels, disposeModels } from './models';
++
++jest.mock('@tensorflow/tfjs', () => ({
++  ready: jest.fn().mockResolvedValue(),
++  loadLayersModel: jest.fn(),
++  loadGraphModel: jest.fn(),
++  tidy: callback => callback(),
++  zeros: jest.fn(),
++  ones: jest.fn(),
++}));
++
++const model = () => ({
++  save: jest.fn().mockResolvedValue(), dispose: jest.fn(), predict: jest.fn(), execute: jest.fn(),
++  inputs: [{ shape: [1, 640, 640, 3] }],
++});
++
++beforeEach(() => jest.clearAllMocks());
++
++test('first load keeps classifier and detector separate when cache storage is unavailable', async () => {
++  const classifier = model();
++  const detector = model();
++  classifier.save.mockRejectedValue(new Error('Storage denied'));
++  tf.loadLayersModel.mockRejectedValueOnce(new Error('No cache')).mockResolvedValueOnce(classifier);
++  tf.loadGraphModel.mockRejectedValueOnce(new Error('No cache')).mockResolvedValueOnce(detector);
++  const result = await loadModels();
++  expect(result).toEqual({ classifier, detector });
++  expect(tf.loadLayersModel).toHaveBeenLastCalledWith('/model/model.json');
++  expect(tf.loadGraphModel).toHaveBeenLastCalledWith('/yolov8_model/model.json');
++  disposeModels(result);
++  expect(classifier.dispose).toHaveBeenCalledTimes(1);
++  expect(detector.dispose).toHaveBeenCalledTimes(1);
++});
++
++test('refresh bypasses both caches and uses the correct model types', async () => {
++  tf.loadLayersModel.mockResolvedValueOnce(model());
++  tf.loadGraphModel.mockResolvedValueOnce(model());
++  const result = await loadModels({ refresh: true });
++  expect(tf.loadLayersModel).toHaveBeenCalledTimes(1);
++  expect(tf.loadLayersModel).toHaveBeenCalledWith('/model/model.json');
++  expect(tf.loadGraphModel).toHaveBeenCalledWith('/yolov8_model/model.json');
++  disposeModels(result);
++});
++
++test('failed detector download disposes the already loaded classifier', async () => {
++  const classifier = model();
++  tf.loadLayersModel.mockResolvedValueOnce(classifier);
++  tf.loadGraphModel.mockRejectedValueOnce(new Error('Download failed'));
++  await expect(loadModels({ refresh: true })).rejects.toThrow('Download failed');
++  expect(classifier.dispose).toHaveBeenCalledTimes(1);
++});
+--- original/src/inference/predict.js
++++ refactored/src/inference/predict.js
+@@ -0,0 +1,103 @@
++import * as tf from '@tensorflow/tfjs';
++import labels from '../model/labels.json';
++import { MODEL_CLASSES } from '../model/classes';
++import { SETTINGS } from './settings';
++import { getAssayCrop } from './geometry';
++
++/** Return the highest-scoring assay box in detector coordinates, or null. */
++export async function detectAssay(detector, source) {
++  let boxes, scores, selected;
++  try {
++    [boxes, scores] = tf.tidy(() => {
++      const image = tf.browser.fromPixels(source);
++      const [height, width] = image.shape;
++      const size = Math.max(width, height);
++      const padded = image.pad([[0, size - height], [0, size - width], [0, 0]]);
++      const input = tf.image.resizeBilinear(padded, detector.inputs[0].shape.slice(1, 3))
++        .div(255).expandDims(0);
++      const output = detector.execute(input).transpose([0, 2, 1]);
++      const boxWidth = output.slice([0, 0, 2], [-1, -1, 1]);
++      const boxHeight = output.slice([0, 0, 3], [-1, -1, 1]);
++      const left = output.slice([0, 0, 0], [-1, -1, 1]).sub(boxWidth.div(2));
++      const top = output.slice([0, 0, 1], [-1, -1, 1]).sub(boxHeight.div(2));
++      return [
++        tf.concat([top, left, top.add(boxHeight), left.add(boxWidth)], 2).squeeze([0]),
++        output.slice([0, 0, 4], [-1, -1, labels.length]).squeeze([0]).max(1),
++      ];
++    });
++    selected = await tf.image.nonMaxSuppressionAsync(
++      boxes, scores, SETTINGS.maxDetections, SETTINGS.iouThreshold, SETTINGS.scoreThreshold
++    );
++    return tf.tidy(() => {
++      const selectedBoxes = boxes.gather(selected).dataSync();
++      const selectedScores = scores.gather(selected).dataSync();
++      if (!selectedScores.length) return null;
++      const score = Math.max(...selectedScores);
++      const offset = selectedScores.indexOf(score) * 4;
++      return { box: Array.from(selectedBoxes.slice(offset, offset + 4)), score };
++    });
++  } finally {
++    tf.dispose([boxes, scores, selected].filter(Boolean));
++  }
++}
++
++export function rankPredictions(values) {
++  return Array.from(values, (value, index) => ({ value, index }))
++    .sort((a, b) => b.value - a.value)
++    .slice(0, 2)
++    .map(({ value, index }) => ({
++      className: MODEL_CLASSES[index],
++      probability: (Math.fround(value) * 100).toFixed(2),
++    }));
++}
++
++export async function classifyCanvas(classifier, canvas) {
++  let logits;
++  try {
++    logits = tf.tidy(() => {
++      // Intentionally retain the study implementation's upper-left extraction,
++      // rather than resizing the entire preview. See REFACTOR_NOTES.md.
++      const size = SETTINGS.classifierSize;
++      const pixels = canvas.getContext('2d').getImageData(0, 0, size, size);
++      const input = tf.browser.fromPixels(pixels).expandDims(0).toFloat()
++        .div(SETTINGS.classifierDivisor).sub(1);
++      return classifier.predict(tf.image.resizeBilinear(input, [size, size]));
++    });
++    return rankPredictions(await logits.data());
++  } finally {
++    if (logits) logits.dispose();
++  }
++}
++
++/** The caller owns the source canvas or captured tensor; this function owns its temporaries. */
++export async function predictImage(models, source, camera = false) {
++  const canvas = document.createElement('canvas');
++  let normalizedFrame, resizedCrop;
++  try {
++    let detectorSource = source;
++    if (camera) {
++      normalizedFrame = tf.tidy(() => source.toFloat().div(255));
++      await tf.browser.toPixels(normalizedFrame, canvas);
++      detectorSource = canvas.getContext('2d').getImageData(0, 0, SETTINGS.cameraSize, SETTINGS.cameraSize);
++    }
++    const detection = await detectAssay(models.detector, detectorSource);
++    if (!detection) throw new Error('No assay area was detected. Try a clearer image.');
++    const crop = getAssayCrop(detection.box, detectorSource.width, detectorSource.height, camera);
++    if (camera) {
++      resizedCrop = tf.tidy(() => {
++        const region = normalizedFrame.slice([crop.y, crop.x, 0], [crop.height, crop.width, -1]);
++        return tf.image.resizeBilinear(region, [SETTINGS.cameraPreview.height, SETTINGS.cameraPreview.width]);
++      });
++      await tf.browser.toPixels(resizedCrop, canvas);
++    } else {
++      canvas.width = SETTINGS.uploadPreview.width;
++      canvas.height = SETTINGS.uploadPreview.height;
++      canvas.getContext('2d').drawImage(source, crop.x, crop.y, crop.width, crop.height,
++        0, 0, canvas.width, canvas.height);
++    }
++    const predictions = await classifyCanvas(models.classifier, canvas);
++    return { predictions, preview: canvas.toDataURL(), detectionScore: detection.score };
++  } finally {
++    tf.dispose([normalizedFrame, resizedCrop].filter(Boolean));
++  }
++}
+--- original/src/inference/predict.test.js
++++ refactored/src/inference/predict.test.js
+@@ -0,0 +1,67 @@
++import * as tf from '@tensorflow/tfjs';
++import { detectAssay, classifyCanvas, rankPredictions } from './predict';
++import { getAssayCrop } from './geometry';
++
++beforeAll(async () => { await tf.setBackend('cpu'); await tf.ready(); });
++afterEach(() => jest.restoreAllMocks());
++
++function detector(score) {
++  return {
++    inputs: [{ shape: [1, 640, 640, 3] }],
++    execute: () => tf.tensor3d([320, 320, 100, 200, score], [1, 5, 1]),
++  };
++}
++
++function mockPixels() {
++  jest.spyOn(tf.browser, 'fromPixels').mockImplementation(() => tf.zeros([2, 2, 3], 'int32'));
++}
++
++test('decodes detector coordinates and releases tensors on success and no detection', async () => {
++  mockPixels();
++  const before = tf.memory().numTensors;
++  for (let i = 0; i < 3; i++) {
++    const result = await detectAssay(detector(0.9), {});
++    expect(result.box).toEqual([220, 270, 420, 370]);
++    expect(result.score).toBeCloseTo(0.9);
++    expect(await detectAssay(detector(0.1), {})).toBeNull();
++  }
++  expect(tf.memory().numTensors).toBe(before);
++});
++
++test('releases detector tensors when suppression fails', async () => {
++  mockPixels();
++  jest.spyOn(tf.image, 'nonMaxSuppressionAsync').mockRejectedValue(new Error('suppression failed'));
++  const before = tf.memory().numTensors;
++  await expect(detectAssay(detector(0.9), {})).rejects.toThrow('suppression failed');
++  expect(tf.memory().numTensors).toBe(before);
++});
++
++test('retains original classifier extraction, normalization and class order', async () => {
++  const getImageData = jest.fn(() => ({}));
++  const canvas = { getContext: () => ({ getImageData }) };
++  jest.spyOn(tf.browser, 'fromPixels').mockImplementation(() => tf.fill([224, 224, 3], 255, 'int32'));
++  const classifier = {
++    predict: input => {
++      expect(input.shape).toEqual([1, 224, 224, 3]);
++      expect(input.dataSync()[0]).toBeCloseTo(255 / 127 - 1);
++      return tf.tensor2d([[0.25, 0.75]]);
++    },
++  };
++  const before = tf.memory().numTensors;
++  expect(await classifyCanvas(classifier, canvas)).toEqual([
++    { className: 'Positive', probability: '75.00' },
++    { className: 'Negative', probability: '25.00' },
++  ]);
++  expect(getImageData).toHaveBeenCalledWith(0, 0, 224, 224);
++  expect(tf.memory().numTensors).toBe(before);
++});
++
++test('retains crop geometry and integer camera coordinates', () => {
++  expect(getAssayCrop([220, 270, 420, 370], 640, 640)).toEqual({ x: 262.5, y: 205, width: 115, height: 230 });
++  expect(getAssayCrop([220, 270, 420, 370], 640, 640, true)).toEqual({ x: 262, y: 205, width: 115, height: 230 });
++  expect(() => getAssayCrop([0, 600, 200, 640], 640, 640, true)).toThrow('image edge');
++});
++
++test('equal scores retain the original label order', () => {
++  expect(rankPredictions([0.5, 0.5]).map(item => item.className)).toEqual(['Negative', 'Positive']);
++});
+--- original/src/inference/settings.js
++++ refactored/src/inference/settings.js
+@@ -0,0 +1,13 @@
++// Study parameters: changes here require validation against the manuscript.
++export const SETTINGS = Object.freeze({
++  classifierSize: 224,
++  cameraSize: 640,
++  detectorSize: 640,
++  maxDetections: 500,
++  iouThreshold: 0.45,
++  scoreThreshold: 0.2,
++  paddingRatio: 0.15,
++  classifierDivisor: 127,
++  uploadPreview: { width: 240, height: 320 },
++  cameraPreview: { width: 300, height: 400 },
++});
+--- original/src/pages/Classify.js
++++ refactored/src/pages/Classify.js
+@@ -1,824 +1,229 @@
+ import React, { Component, Fragment } from 'react';
+-import {
+-  Alert, Button, Collapse, Container, Form, Spinner, ListGroup, Tabs, Tab
+-} from 'react-bootstrap';
+-import { FaCamera, FaChevronDown, FaChevronRight } from 'react-icons/fa';
+-import { openDB } from 'idb';
+-import Cropper  from 'react-cropper';
++import { Alert, Button, Form, Spinner, ListGroup, Tabs, Tab } from 'react-bootstrap';
++import Cropper from 'react-cropper';
+ import * as tf from '@tensorflow/tfjs';
+ import LoadButton from '../components/LoadButton';
+-import { MODEL_CLASSES } from '../model/classes';
+-import config from '../config';
++import { loadModels, disposeModels } from '../inference/models';
++import { predictImage } from '../inference/predict';
++import { SETTINGS } from '../inference/settings';
+ import './Classify.css';
+ import 'cropperjs/dist/cropper.css';
+-import labels from "../model/labels.json";
+-
+-//CNN part
+-const MODEL_PATH = '/model/model.json';
+-
+-const IMAGE_SIZE_X = 224;
+-const IMAGE_SIZE_Y = 224;
+-
+-const CNN_MODEL_SIZE = 224;
+-
+-const CANVAS_SIZE_X = 240; //224 => 300 => 240
+-const CANVAS_SIZE_Y = 320; //224 => 400 => 320
+-
+-const YOLO_CANVAS_SIZE = 640;
+-const CAMERA_SIZE_X = 640;
+-const CAMERA_SIZE_Y = 640;
+-
+-const TOPK_PREDICTIONS = 2;
+-
+-const INDEXEDDB_DB = 'tensorflowjs';
+-const INDEXEDDB_STORE = 'model_info_store';
+-const INDEXEDDB_KEY = 'web-mobilenetv2-model';
+-
+-// Yolo Part
+-const numClass = labels.length;
+-
+-const YOLO_MODEL_PATH = '/yolov8_model/model.json';
+-
+-const INDEXEDDB_YOLO_DB = 'yolo_model';
+-const INDEXEDDB_YOLO_STORE = 'yolo_model_info_store';
+-const INDEXEDDB_YOLO_KEY = 'web_yolo_model';
+-
+-/**
+- * @extends React.Component
+- */
++
++/** Owns UI state and browser resources; inference lives in src/inference. */
+ export default class Classify extends Component {
+-
+-  constructor(props) {
+-    super(props);
+-
++  videoRef = React.createRef();
++  cropperRef = React.createRef();
++  resultRef = React.createRef();
++  models = null;
++  webcam = null;
++  active = false;
++  busy = false;
++  cameraRequest = 0;
++  imageUrl = null;
++
++  state = {
++    loading: true,
++    ready: false,
++    classifying: false,
++    cameraReady: false,
++    cameraStarting: false,
++    cameraError: '',
++    error: '',
++    tab: 'camera',
++    file: null,
++    filename: '',
++    imageReady: false,
++    result: null,
++    photoControlsOpen: true,
++  };
++
++  componentDidMount() {
++    this.active = true;
++    this.initializeModels();
++  }
++
++  componentWillUnmount() {
++    this.active = false;
++    this.stopCamera();
++    if (this.imageUrl) URL.revokeObjectURL(this.imageUrl);
++    // An in-flight prediction still owns the models until its finally block.
++    if (!this.busy) disposeModels(this.models);
++  }
++
++  initializeModels = async (refresh = false) => {
++    if (this.busy) return;
++    this.busy = true;
++    this.setState({ loading: true, error: '', result: null, photoControlsOpen: true });
++    let nextModels;
++    try {
++      nextModels = await loadModels({ refresh });
++      if (!this.active) {
++        disposeModels(nextModels);
++        return;
++      }
++      disposeModels(this.models);
++      this.models = nextModels;
++      this.setState({ ready: true });
++    } catch (error) {
++      if (this.active) this.setState({ error: 'Models could not be loaded. Check your connection and try again.' });
++    } finally {
++      this.busy = false;
++      if (this.active) this.setState({ loading: false });
++      else disposeModels(this.models);
++    }
++  };
++
++  stopCamera = () => {
++    this.cameraRequest += 1;
++    if (this.webcam) this.webcam.stop();
+     this.webcam = null;
+-    this.model = null;
+-    this.modelLastUpdated = null;
+-    this.yoloModel = null;
+-    this.yoloModelLastUpdated = null;
+-
+-    this.state = {
+-      modelLoaded: false,
+-      yoloModelLoaded: false,
+-      filename: '',
+-      isModelLoading: false,
+-      isYoloModelLoading: false,
+-      isClassifying: false,
+-      isDetecting: false,
+-      scores_data: null,
+-      predictions: [],
+-      photoSettingsOpen: true,
+-      modelUpdateAvailable: false,
+-      yoloModelUpdateAvailable: false,
+-      showModelUpdateAlert: false,
+-      showYoloModelUpdateAlert: false,
+-      showModelUpdateSuccess: false,
+-      showYoloModelUpdateSuccess: false,
+-      isDownloadingModel: false,
+-      isDownloadingYoloModel: false
+-    };
+-  }
+-
+-  async componentDidMount() {
+-    if (('indexedDB' in window)) {
+-      try {
+-        this.model = await tf.loadLayersModel('indexeddb://' + INDEXEDDB_KEY);
+-
+-        try {
+-          const db = await openDB(INDEXEDDB_DB, 1, );
+-          const item = await db.transaction(INDEXEDDB_STORE)
+-                               .objectStore(INDEXEDDB_STORE)
+-                               .get(INDEXEDDB_KEY);
+-          const dateSaved = new Date(item.modelArtifactsInfo.dateSaved);
+-          await this.getModelInfo();
+-          console.log(this.modelLastUpdated);
+-          if (!this.modelLastUpdated  || dateSaved >= new Date(this.modelLastUpdated).getTime()) {
+-            console.log('Using saved model');
++  };
++
++  startCamera = async () => {
++    if (this.state.cameraStarting || this.webcam) return;
++    const request = ++this.cameraRequest;
++    this.setState({ cameraStarting: true, cameraError: '' });
++    try {
++      const webcam = await tf.data.webcam(this.videoRef.current, {
++        resizeWidth: SETTINGS.cameraSize,
++        resizeHeight: SETTINGS.cameraSize,
++        facingMode: 'environment',
++      });
++      if (!this.active || request !== this.cameraRequest || this.state.tab !== 'camera') {
++        webcam.stop();
++        return;
++      }
++      this.webcam = webcam;
++      this.setState({ cameraReady: true });
++    } catch (error) {
++      if (this.active && request === this.cameraRequest) {
++        this.setState({ cameraError: 'Camera access is unavailable. Allow camera access or select an image file.' });
++      }
++    } finally {
++      if (this.active && request === this.cameraRequest) this.setState({ cameraStarting: false });
++    }
++  };
++
++  selectTab = tab => {
++    if (this.busy) return;
++    this.stopCamera();
++    this.setState({ tab, cameraReady: false, cameraStarting: false, cameraError: '', error: '', result: null });
++  };
++
++  selectFile = event => {
++    const file = event.target.files[0];
++    if (!file || this.busy) return;
++    if (file.type && !file.type.startsWith('image/')) {
++      this.setState({ error: 'Select an image file.' });
++      return;
++    }
++    if (this.imageUrl) URL.revokeObjectURL(this.imageUrl);
++    this.imageUrl = URL.createObjectURL(file);
++    this.setState({ file: this.imageUrl, filename: file.name, imageReady: false, result: null, error: '' });
++  };
++
++  classify = async () => {
++    if (this.busy || !this.models) return;
++    this.busy = true;
++    this.setState({ classifying: true, error: '', result: null });
++    let capturedFrame;
++    try {
++      const camera = this.state.tab === 'camera';
++      let source;
++      if (camera) {
++        if (!this.webcam) throw new Error('Start the camera before classifying.');
++        capturedFrame = await this.webcam.capture();
++        source = capturedFrame;
++      } else {
++        const cropper = this.cropperRef.current;
++        if (!cropper || !this.state.imageReady) throw new Error('Select an image and wait for it to load.');
++        // Preserve the original upload crop selection used before detection.
++        cropper.setCropBoxData({ left: 0, top: 0, width: 281, height: 500 });
++        source = cropper.getCroppedCanvas();
++        if (!source) throw new Error('The image could not be read. Select another image.');
++      }
++      const result = await predictImage(this.models, source, camera);
++      if (this.active) {
++        this.setState({ result, photoControlsOpen: false }, () => {
++          const resultPanel = this.resultRef.current;
++          if (resultPanel) {
++            resultPanel.focus({ preventScroll: true });
++            resultPanel.scrollIntoView({ block: 'nearest' });
+           }
+-          else {
+-            this.setState({
+-              modelUpdateAvailable: true,
+-              showModelUpdateAlert: true,
+-            });
+-          }
+-
+-        }
+-        catch (error) {
+-          console.warn(error);
+-          console.warn('Could not retrieve when model was saved.');
+-        }
+-
+-      }
+-      catch (error) {
+-        console.log('Not found in IndexedDB. Loading and saving...');
+-        console.log(error);
+-        this.model = await tf.loadLayersModel(MODEL_PATH);
+-        await this.model.save('indexeddb://' + INDEXEDDB_KEY);
+-      }
+-      try {
+-        this.yoloModel = await tf.loadGraphModel('indexeddb://' + INDEXEDDB_YOLO_KEY);
+-        try{
+-            const db = await openDB(INDEXEDDB_YOLO_DB, 1 , );
+-            const item = await db.transaction(INDEXEDDB_YOLO_STORE)
+-                                .objectStore(INDEXEDDB_YOLO_STORE)
+-                                .get(INDEXEDDB_YOLO_KEY);
+-            const dateSaved = new Date(item.modelArtifactsInfo.dateSaved);
+-            await this.getModelInfo();
+-            console.log(this.yoloModelLastUpdated);
+-            if (!this.yoloModelLastUpdated || dateSaved >= new Date(this.yoloModelLastUpdated).getTime()){
+-                console.log('Using saved yolo model');
+-            }
+-            else {
+-                this.setState({
+-                    yoloModelUpdateAvailable: true,
+-                    showYoloModelUpdateAlert: true,
+-                });
+-            }
+-        }
+-        catch (error){
+-            console.warn(error);
+-            console.warn('Could not retrieve when yolo model was saved.');
+-        }
+-      }
+-      catch(error){
+-        console.log('Not found in IndexedDB. Loading and saving...');
+-        console.log(error);
+-        this.model = await tf.loadGraphModel(YOLO_MODEL_PATH);
+-        await this.model.save('indexeddb://' + INDEXEDDB_YOLO_KEY);
+-      }
+-    }
+-    else {
+-      console.warn('IndexedDB not supported.');
+-      this.model = await tf.loadLayersModel(MODEL_PATH);
+-      this.yoloModel = await tf.loadGraphModel(YOLO_MODEL_PATH);
+-    }
+-
+-    this.setState({ modelLoaded: true });
+-    this.setState({yoloModelLoaded: true});
+-    this.initWebcam();
+-
+-    let prediction = tf.tidy(() => this.model.predict(tf.zeros([1, CNN_MODEL_SIZE, CNN_MODEL_SIZE, 3])));
+-    prediction.dispose();
+-
+-    const dummyInput = tf.ones(this.yoloModel.inputs[0].shape);
+-    const warmUpResults = this.yoloModel.execute(dummyInput);
+-
+-    tf.dispose([warmUpResults,dummyInput])
+-
+-
+-  }
+-
+-  async componentWillUnmount() {
+-    if (this.webcam) {
+-      this.webcam.stop();
+-    }
+-
+-    try {
+-      this.model.dispose();
+-    }
+-    catch (e) {
+-    }
+-  }
+-
+-  initWebcam = async () => {
+-    try {
+-      this.webcam = await tf.data.webcam(
+-        this.refs.webcam,
+-        {resizeWidth: CAMERA_SIZE_X, resizeHeight: CAMERA_SIZE_Y, facingMode: 'environment'}
+-      );
+-    }
+-    catch (e) {
+-      this.refs.noWebcam.style.display = 'block';
+-    }
+-  }
+-
+-  startWebcam = async () => {
+-    if (this.webcam) {
+-      this.webcam.start();
+-    }
+-  }
+-
+-  stopWebcam = async () => {
+-    if (this.webcam) {
+-      this.webcam.stop();
+-    }
+-  }
+-
+-  getModelInfo = async () => {
+-    await fetch(`${config.API_ENDPOINT}/model_info`, {
+-      method: 'GET',
+-    })
+-    .then(async (response) => {
+-      await response.json().then((data) => {
+-        this.modelLastUpdated = data.last_updated;
+-      })
+-      .catch((err) => {
+-        console.log('Unable to get parse model info.');
+-      });
+-    })
+-    .catch((err) => {
+-      console.log('Unable to get model info');
+-    });
+-    await fetch(`${config.API_ENDPOINT}/yolo_model_info`, {
+-      method: 'GET',
+-  })
+-  .then(async (response) => {
+-      await response.json().then((data) => {
+-        this.yoloModelLastUpdated = data.last_updated;
+-      })
+-      .catch((err) => {
+-        console.log('Unable to get parse model info.');
+-      });
+-  })
+-  .catch((err) => {
+-      console.log('Unable to get yolo model info');
+-  });
+-  }
+-
+-  updateModel = async () => {
+-    console.log('Updating the model: ' + INDEXEDDB_KEY);
+-    this.setState({ isDownloadingModel: true });
+-    this.model = await tf.loadLayersModel(MODEL_PATH);
+-    await this.model.save('indexeddb://' + INDEXEDDB_KEY);
+-    console.log('Updating the yolo model: ' + INDEXEDDB_YOLO_KEY);
+-    this.setState({ isDownloadingYoloModel: true });
+-    this.model = await tf.loadLayersModel(YOLO_MODEL_PATH);
+-    await this.model.save('indexeddb://' + INDEXEDDB_YOLO_KEY);
+-    this.setState({
+-      isDownloadingModel: false,
+-      modelUpdateAvailable: false,
+-      showModelUpdateAlert: false,
+-      showModelUpdateSuccess: true,
+-      isDownloadingYoloModel: false,
+-      yoloModelUpdateAvailable: false,
+-      showYoloModelUpdateAlert: false,
+-      showYoloModelUpdateSuccess: true
+-    });
+-  }
+-  
+-
+-  classifyLocalImage = async () => {
+-    try {
+-    this.setState({ isClassifying: true });
+-
+-    const [modelWidth, modelHeight] = this.yoloModel.inputs[0].shape.slice(1,3);
+-
+-    
+-    this.refs.cropper.setCropBoxData({ left: 0, top: 0, width: 281, height: 500 });
+-    const croppedCanvas = this.refs.cropper.getCroppedCanvas();
+-
+-    // const image = tf.tidy( () => tf.browser.fromPixels(croppedCanvas).toFloat());
+-
+-    const input = tf.tidy(() => {
+-      const img = tf.browser.fromPixels(croppedCanvas);
+-
+-      const [h, w] = img.shape.slice(0, 2); 
+-      const maxSize = Math.max(w, h); 
+-      const imgPadded = img.pad([
+-        [0, maxSize - h], 
+-        [0, maxSize - w], 
+-        [0, 0],
+-      ]);
+-
+-      return tf.image
+-                .resizeBilinear(imgPadded, [modelWidth, modelHeight]) 
+-                .div(255.0) 
+-                .expandDims(0); 
+-              
+-    });
+-      
+-    tf.engine().startScope();
+-
+-    const res = this.yoloModel.execute(input);
+-    const transRes = res.transpose([0, 2, 1]);
+-
+-    const boxes = tf.tidy(() => {
+-      const w = transRes.slice([0, 0, 2], [-1, -1, 1]);
+-      const h = transRes.slice([0, 0, 3], [-1, -1, 1]);
+-      const x1 = tf.sub(transRes.slice([0, 0, 0], [-1, -1, 1]), tf.div(w, 2));
+-      const y1 = tf.sub(transRes.slice([0, 0, 1], [-1, -1, 1]), tf.div(h, 2));
+-      return tf.concat([y1, x1, tf.add(y1, h), tf.add(x1, w)], 2).squeeze();
+-    });
+-
+-    const [scores, classes] = tf.tidy(() => {
+-      const rawScores = transRes.slice([0, 0, 4], [-1, -1, numClass]).squeeze(0);
+-      return [rawScores.max(1), rawScores.argMax(1)];
+-    });
+-
+-    const nms = await tf.image.nonMaxSuppressionAsync(boxes, scores, 500, 0.45, 0.2);
+-
+-    const boxes_data = boxes.gather(nms, 0).dataSync();
+-    const scores_data = scores.gather(nms, 0).dataSync();
+-
+-    // if (!boxes_data || boxes_data.length === 0)  return;
+-
+-    if (!boxes_data || boxes_data.length === 0) {
+-      this.setState({ isClassifying: false });
+-      alert("Assay area could not be detected, please use another image. The application will be reloaded!");
+-      return;
+-    }
+-
+-    const best_score_data = Math.max(...scores_data)
+-    console.log(scores_data)
+-    const best_score_index = scores_data.indexOf(best_score_data)
+-
+-    const best_score_data_selected = new Float32Array([best_score_data]);
+-
+-    const bestIdx = best_score_index;
+-
+-    const boxStart = bestIdx * 4;
+-    const boxes_data_selected = new Float32Array([
+-      boxes_data[boxStart],
+-      boxes_data[boxStart + 1],
+-      boxes_data[boxStart + 2],
+-      boxes_data[boxStart + 3]
+-    ]);
+-
+-    console.log(boxes_data_selected)
+-    // const a = boxes_data[boxStart];
+-    // const b = boxes_data[boxStart + 1];
+-    // const c = boxes_data[boxStart + 2];
+-    // const d = boxes_data[boxStart + 3];
+-
+-    // const boxes_data_selected = [a,b,c,d]
+-
+-    tf.engine().endScope();
+-
+-    this.setState({ scores_data, boxes_data_selected, best_score_data,best_score_data_selected});
+-
+-
+-
+-    
+-    // // Second nicely worked algorithm
+-    const context = this.refs.canvas.getContext('2d');
+-    context.clearRect(0, 0, CANVAS_SIZE_X, CANVAS_SIZE_Y);
+-
+-    // === Step 1: No detections => Skip ===
+-    
+-
+-    // === Step 2: Find index of highest confidence ===
+-    // let bestScore = scores_data[best_score_index];
+-    // for (let i = 1; i < scores_data.length; i++) {
+-    //   if (scores_data[i] > bestScore) {
+-    //     bestScore = scores_data[i];
+-    //     bestIdx = i;
+-    //   }
+-    // }
+-
+-   
+- 
+-
+-
+-    
+-
+-    // === Step 1: Select detection with highest confidence ===
+-    // Assuming YOLO output format: boxes_data = [[ymin, xmin, ymax, xmax, confidence, class], ...]
+-    // if (!boxes_data_selected || boxes_data_selected.length === 0) return; // No detections, skip drawing
+-
+-    // Pick the detection with max confidence
+-    // const bestBox = boxes_data_selected.reduce((prev, curr) =>
+-    //   prev[4] > curr[4] ? prev : curr
+-    // );
+-
+-    // === Ratios between desired canvas size and original image size ===
+-    const ratioX = 640 / croppedCanvas.width;
+-    const ratioY = 640 / croppedCanvas.height;
+-    const ratio = Math.min(ratioX, ratioY);
+-
+-    // === Detected bounding box ===
+-    const [y_min, x_min, y_max, x_max] = boxes_data_selected;
+-
+-    // === Convert box coordinates to target space ===
+-    const img_x = x_min / ratio;
+-    const img_y = y_min / ratio;
+-    const img_w = (x_max - x_min) / ratio;
+-    const img_h = (y_max - y_min) / ratio;
+-
+-    // === Dynamic padding based on image size ===
+-    // Adds 10–20% margin around object depending on how large the box is
+-    const paddingRatio = 0.15; // 15% padding
+-    const padX = img_w * paddingRatio;
+-    const padY = img_h * paddingRatio;
+-
+-    // === Adjusted coordinates with boundary checks ===
+-    const draw_x = Math.max(0, img_x - padX / 2);
+-    const draw_y = Math.max(0, img_y - padY / 2);
+-    const draw_w = Math.min(croppedCanvas.width, img_w + padX);
+-    const draw_h = Math.min(croppedCanvas.height, img_h + padY);
+-
+-    // === Draw scaled image into final canvas ===
+-    context.drawImage(
+-      croppedCanvas,
+-      draw_x, draw_y, draw_w, draw_h,  // source
+-      0, 0, CANVAS_SIZE_X, CANVAS_SIZE_Y // destination
+-    );
+-
+-    
+-
+-    const detectedCanvas = this.refs.canvas.getContext('2d');
+-    const canvasImageData = detectedCanvas.getImageData(0, 0, 224, 224);
+-    const image = tf.tidy( () => tf.browser.fromPixels(canvasImageData));
+-
+-    const imageData = await this.processImage(image);
+-    const resizedImage = tf.image.resizeBilinear(imageData, [IMAGE_SIZE_X, IMAGE_SIZE_Y]);
+-
+-    const logits = this.model.predict(resizedImage);
+-    const probabilities = await logits.data();
+-    const preds = await this.getTopKClasses(probabilities, TOPK_PREDICTIONS);
+-
+-    this.setState({
+-      predictions: preds,
+-      isClassifying: false,
+-      photoSettingsOpen: !this.state.photoSettingsOpen
+-    });
+-
+-    image.dispose();
+-    imageData.dispose();
+-    resizedImage.dispose();
+-    logits.dispose();
+-  } catch (error) {
+-    console.error("An error occurred:", error);
+-    alert("Assay area could not be detected, please use another image. The application will be reloaded!");
+-    this.setState({ isClassifying: false }); // Set isClassifying state back to false
+-    window.location.reload();
+-}
+-  }
+-
+-classifyWebcamImage = async () => {
+-  try {
+-    this.setState({isClassifying: true, best_score_data_selected: 1});
+-
+-    const [modelWidth, modelHeight] = this.yoloModel.inputs[0].shape.slice(1, 3);
+-
+-    // === Capture current webcam frame ===
+-    const imageCapture = await this.webcam.capture();
+-
+-    // Convert webcam tensor to normalized tensor
+-    const tensorData = tf.tidy(() => imageCapture.toFloat().div(255));
+-    await tf.browser.toPixels(tensorData, this.refs.canvas);
+-
+-    const contextImg = this.refs.canvas.getContext('2d');
+-    const contextImgR = contextImg.getImageData(0, 0, 640, 640);
+-
+-    // === Prepare input for YOLO model ===
+-    const input = tf.tidy(() => {
+-      const img = tf.browser.fromPixels(contextImgR);
+-      const [h, w] = img.shape.slice(0, 2);
+-      const maxSize = Math.max(w, h);
+-      const imgPadded = img.pad([
+-        [0, maxSize - h],
+-        [0, maxSize - w],
+-        [0, 0],
+-      ]);
+-
+-      return tf.image
+-        .resizeBilinear(imgPadded, [modelWidth, modelHeight])
+-        .div(255.0)
+-        .expandDims(0);
+-    });
+-
+-    tf.engine().startScope();
+-
+-    // === Run YOLO model ===
+-    const res = this.yoloModel.execute(input);
+-    const transRes = res.transpose([0, 2, 1]);
+-
+-    // === Extract boxes ===
+-    const boxes = tf.tidy(() => {
+-      const w = transRes.slice([0, 0, 2], [-1, -1, 1]);
+-      const h = transRes.slice([0, 0, 3], [-1, -1, 1]);
+-      const x1 = tf.sub(transRes.slice([0, 0, 0], [-1, -1, 1]), tf.div(w, 2));
+-      const y1 = tf.sub(transRes.slice([0, 0, 1], [-1, -1, 1]), tf.div(h, 2));
+-      return tf.concat([y1, x1, tf.add(y1, h), tf.add(x1, w)], 2).squeeze();
+-    });
+-
+-    // === Extract scores and classes ===
+-    const [scores, classes] = tf.tidy(() => {
+-      const rawScores = transRes.slice([0, 0, 4], [-1, -1, numClass]).squeeze(0);
+-      return [rawScores.max(1), rawScores.argMax(1)];
+-    });
+-
+-    // === Non-max suppression ===
+-    const nms = await tf.image.nonMaxSuppressionAsync(boxes, scores, 500, 0.45, 0.2);
+-    const boxes_data = boxes.gather(nms, 0).dataSync();
+-    const scores_data = scores.gather(nms, 0).dataSync();
+-
+-    // if (!boxes_data || boxes_data.length === 0) {
+-    //   this.setState({ isClassifying: false });
+-    //   return;
+-    // }
+-    if (!boxes_data || boxes_data.length === 0) {
+-      this.setState({ isClassifying: false });
+-      alert("Assay area could not be detected, please use another image. The application will be reloaded!");
+-      return;
+-    }
+-
+-    // === Pick highest-score box ===
+-    const best_score_data_selected = Math.max(...scores_data);
+-    const best_score_index = scores_data.indexOf(best_score_data_selected);
+-    const boxStart = best_score_index * 4;
+-    const boxes_data_selected = [
+-      boxes_data[boxStart],
+-      boxes_data[boxStart + 1],
+-      boxes_data[boxStart + 2],
+-      boxes_data[boxStart + 3],
+-    ];
+-
+-    tf.engine().endScope();
+-
+-    // === Save detection info to state ===
+-    this.setState({
+-      scores_data,
+-      boxes_data_selected,
+-      best_score_data_selected,
+-    });
+-
+-    // === Draw cropped area ===
+-    const context = this.refs.canvas.getContext('2d');
+-    context.clearRect(0, 0, YOLO_CANVAS_SIZE, YOLO_CANVAS_SIZE);
+-
+-    const ratioX = YOLO_CANVAS_SIZE / contextImgR.width;
+-    const ratioY = YOLO_CANVAS_SIZE / contextImgR.height;
+-    const ratio = Math.min(ratioX, ratioY);
+-
+-    const [y_min, x_min, y_max, x_max] = boxes_data_selected;
+-
+-    // Convert YOLO box coords to image coords
+-    const img_x = x_min / ratio;
+-    const img_y = y_min / ratio;
+-    const img_w = (x_max - x_min) / ratio;
+-    const img_h = (y_max - y_min) / ratio;
+-
+-    // Add dynamic padding (15%)
+-    const paddingRatio = 0.15;
+-    const padX = img_w * paddingRatio;
+-    const padY = img_h * paddingRatio;
+-
+-    const draw_x = (Math.max(0, img_x - padX / 2)) |0;
+-    const draw_y = (Math.max(0, img_y - padY / 2))|0;
+-    const draw_w = (Math.min(contextImgR.width, img_w + padX))|0;
+-    const draw_h = (Math.min(contextImgR.height, img_h + padY))|0;
+-
+-    // // Draw from live webcam element
+-    // context.drawImage(
+-    //   this.webcam.webcamElement,
+-    //   draw_x,
+-    //   draw_y,
+-    //   draw_w,
+-    //   draw_h,
+-    //   0,
+-    //   0,
+-    //   YOLO_CANVAS_SIZE,
+-    //   YOLO_CANVAS_SIZE
+-    // );
+-    const tensorDataR = tf.tidy(() => imageCapture.toFloat().div(255).slice([draw_y,draw_x,0],[draw_h,draw_w,-1]));
+-    const upscaleTensorDataR = tf.tidy(()=>tf.image.resizeBilinear(tensorDataR,[400,300]));
+-    // const upscaleTensorDataR = tf.tidy(()=>tf.image.resizeBilinear(tensorDataR,[draw_h,draw_w]));
+-    await tf.browser.toPixels(upscaleTensorDataR, this.refs.canvas);
+-
+-    // === Continue classification ===
+-    const detectedCanvas = this.refs.canvas.getContext('2d');
+-    const canvasImageData = detectedCanvas.getImageData(0, 0, 224, 224);
+-    const image = tf.tidy(() => tf.browser.fromPixels(canvasImageData));
+-
+-    const imageData = await this.processImage(image);
+-    const resizedImage = tf.image.resizeBilinear(imageData, [IMAGE_SIZE_X, IMAGE_SIZE_Y]);
+-
+-    const logits = this.model.predict(resizedImage);
+-    const probabilities = await logits.data();
+-    const preds = await this.getTopKClasses(probabilities, TOPK_PREDICTIONS);
+-
+-    this.setState({
+-      predictions: preds,
+-      isClassifying: false,
+-      photoSettingsOpen: !this.state.photoSettingsOpen,
+-      
+-    });
+-
+-    image.dispose();
+-    imageData.dispose();
+-    resizedImage.dispose();
+-    logits.dispose();
+-    imageCapture.dispose();
+-    tensorData.dispose();
+-  } catch (error) {
+-    console.error("An error occurred:", error);
+-    alert("Assay area could not be detected, please take another image. The application will be reloaded!");
+-    this.setState({ isClassifying: false });
+-    window.location.reload();
+-  }
+-};
+-
+-  processImage = async (image) => {
+-    return tf.tidy(() => image.expandDims(0).toFloat().div(127).sub(1));
+-  }
+-
+-  /**
+-   * @param logits 
+-   * @param topK 
+-   */
+-  getTopKClasses = async (values, topK) => {
+-    const valuesAndIndices = [];
+-    for (let i = 0; i < values.length; i++) {
+-      valuesAndIndices.push({value: values[i], index: i});
+-    }
+-    valuesAndIndices.sort((a, b) => {
+-      return b.value - a.value;
+-    });
+-    const topkValues = new Float32Array(topK);
+-    const topkIndices = new Int32Array(topK);
+-    for (let i = 0; i < topK; i++) {
+-      topkValues[i] = valuesAndIndices[i].value;
+-      topkIndices[i] = valuesAndIndices[i].index;
+-    }
+-
+-    const topClassesAndProbs = [];
+-    for (let i = 0; i < topkIndices.length; i++) {
+-      topClassesAndProbs.push({
+-        className: MODEL_CLASSES[topkIndices[i]],
+-        probability: (topkValues[i] * 100).toFixed(2)
+-      });
+-    }
+-    return topClassesAndProbs;
+-  }
+-
+-  handlePanelClick = event => {
+-    this.setState({ photoSettingsOpen: !this.state.photoSettingsOpen });
+-  }
+-
+-  handleFileChange = event => {
+-    if (event.target.files && event.target.files.length > 0) {
+-      this.setState({
+-        file: URL.createObjectURL(event.target.files[0]),
+-        filename: event.target.files[0].name
+-      });
+-    }
+-  }
+-
+-  handleTabSelect = activeKey => {
+-    switch(activeKey) {
+-      case 'camera':
+-        this.startWebcam();
+-        break;
+-      case 'localfile':
+-        this.setState({filename: null, file: null});
+-        this.stopWebcam();
+-        break;
+-      default:
+-    }
+-  }
++        });
++      }
++    } catch (error) {
++      if (this.active) this.setState({ error: error.message || 'Classification failed. Try another image.' });
++    } finally {
++      if (capturedFrame) capturedFrame.dispose();
++      this.busy = false;
++      if (this.active) this.setState({ classifying: false });
++      else disposeModels(this.models);
++    }
++  };
+ 
+   render() {
++    const { loading, ready, error, tab, file, filename, imageReady, classifying,
++      cameraReady, cameraStarting, cameraError, result, photoControlsOpen } = this.state;
++    const disabled = loading || classifying;
+     return (
+       <div className="Classify container">
+-
+-      { !this.state.modelLoaded &&
+-        <Fragment>
+-          <Spinner animation="border" role="status">
+-            <span className="sr-only">Loading...</span>
+-          </Spinner>
+-          {' '}<span className="loading-model-text">Loading Models</span>
+-        </Fragment>
+-      }
+-
+-      { this.state.modelLoaded &&
+-        <Fragment>
+-        <Button
+-          onClick={this.handlePanelClick}
+-          className="classify-panel-header"
+-          aria-controls="photo-selection-pane"
+-          aria-expanded={this.state.photoSettingsOpen}
+-          >
+-          Take or Select a Photo to Classify
+-            <span className='panel-arrow'>
+-            { this.state.photoSettingsOpen
+-              ? <FaChevronDown />
+-              : <FaChevronRight />
+-            }
+-            </span>
++        {loading && <p role="status"><Spinner animation="border" size="sm" /> Loading models…</p>}
++        {error && <Alert variant="danger">{error}</Alert>}
++        {!loading && <Button variant="outline-secondary" disabled={classifying}
++          onClick={() => this.initializeModels(true)}>
++          {ready ? 'Reload bundled models' : 'Retry loading models'}
++        </Button>}
++        {ready && <Fragment>
++          <Button className="classify-panel-header" disabled={disabled}
++            aria-controls="photo-selection-pane" aria-expanded={photoControlsOpen}
++            onClick={() => this.setState(state => ({ photoControlsOpen: !state.photoControlsOpen }))}>
++            {photoControlsOpen ? 'Hide photo controls' : 'Take or select another photo'}
+           </Button>
+-          <Collapse in={this.state.photoSettingsOpen}>
+-            <div id="photo-selection-pane">
+-            { this.state.modelUpdateAvailable && this.state.showModelUpdateAlert &&
+-                <Container>
+-                  <Alert
+-                    variant="info"
+-                    show={this.state.modelUpdateAvailable && this.state.showModelUpdateAlert}
+-                    onClose={() => this.setState({ showModelUpdateAlert: false})}
+-                    dismissible>
+-                      An update for the <strong>{this.state.modelType}</strong> model is available.
+-                      <div className="d-flex justify-content-center pt-1">
+-                        {!this.state.isDownloadingModel &&
+-                          <Button onClick={this.updateModel}
+-                                  variant="outline-info">
+-                            Update
+-                          </Button>
+-                        }
+-                        {this.state.isDownloadingModel &&
+-                          <div>
+-                            <Spinner animation="border" role="status" size="sm">
+-                              <span className="sr-only">Downloading...</span>
+-                            </Spinner>
+-                            {' '}<strong>Downloading...</strong>
+-                          </div>
+-                        }
+-                      </div>
+-                  </Alert>
+-                </Container>
+-              }
+-              {this.state.showModelUpdateSuccess &&
+-                <Container>
+-                  <Alert variant="success"
+-                         onClose={() => this.setState({ showModelUpdateSuccess: false})}
+-                         dismissible>
+-                    The <strong>{this.state.modelType}</strong> model has been updated!
+-                  </Alert>
+-                </Container>
+-              }
+-            <Tabs defaultActiveKey="camera" id="input-options" onSelect={this.handleTabSelect}
+-                  className="justify-content-center">
+-              <Tab eventKey="camera" title="Take Photo">
+-                <div id="no-webcam" ref="noWebcam">
+-                  <span className="camera-icon"><FaCamera /></span>
+-                  No camera found. <br />
+-                  Please use a device with a camera,give access to camera or upload an image instead.
++          <div id="photo-selection-pane" hidden={!photoControlsOpen}>
++          <h2 className="mt-4">Take or select a photo</h2>
++          <Tabs activeKey={tab} id="input-options" onSelect={this.selectTab}>
++            <Tab eventKey="camera" title="Take photo" disabled={disabled}>
++              {cameraError && <Alert variant="warning">{cameraError}</Alert>}
++              <div className="webcam-box-outer">
++                <div className="webcam-box-inner">
++                  <video ref={this.videoRef} autoPlay playsInline muted id="webcam"
++                    width="480" height="480" aria-label="Camera preview" />
+                 </div>
+-                <div className="webcam-box-outer">
+-                  <div className="webcam-box-inner">
+-                    <video ref="webcam" autoPlay playsInline muted id="webcam"
+-                           width="480" height="480">
+-                    </video>
+-                  </div>
+-                </div>
+-                <div className="button-container">
+-                  <LoadButton
+-                    variant="primary"
+-                    size="lg"
+-                    onClick={this.classifyWebcamImage}
+-                    isLoading={this.state.isClassifying}
+-                    text="Classify"
+-                    loadingText="Classifying..."
+-                  />
+-                </div>
+-              </Tab>
+-              <Tab eventKey="localfile" title="Select Local File">
+-                <Form.Group controlId="file">
+-                  <Form.Label>Select Image File</Form.Label><br />
+-                  <Form.Label className="imagelabel">
+-                    {this.state.filename ? this.state.filename : 'Browse...'}
+-                  </Form.Label>
+-                  <Form.Control
+-                    onChange={this.handleFileChange}
+-                    type="file"
+-                    accept="image/*"
+-                    className="imagefile" />
+-                </Form.Group>
+-                { this.state.file &&
+-                  <Fragment>
+-                    <div id="local-image">
+-                      <Cropper
+-                        ref="cropper"
+-                        src={this.state.file}
+-                        style={{height: 500, width: 281.25}}
+-                        guides={false}
+-                        aspectRatio={ 9/ 16}
+-                        viewMode={2}
+-                      />
+-                    </div>
+-                    <div className="button-container">
+-                      <LoadButton
+-                        variant="primary"
+-                        size="lg"
+-                        disabled={!this.state.filename}
+-                        onClick={this.classifyLocalImage}
+-                        isLoading={this.state.isClassifying}
+-                        text="Classify"
+-                        loadingText="Classifying..."
+-                      />
+-                    </div>
+-                  </Fragment>
+-                }
+-              </Tab>
+-            </Tabs>
+-            </div>
+-          </Collapse>
+-          { this.state.best_score_data_selected  > 0 &&
+-            <div className="classification-results">
+-              <h3>Prediction</h3>
+-              <canvas ref="canvas" width={CANVAS_SIZE_X} height={CANVAS_SIZE_Y} />
+-              <br />
+-              <ListGroup>
+-              {this.state.predictions.map((category) => {
+-                  return (
+-                    <ListGroup.Item key={category.className}>
+-                      <strong>{category.className}</strong> {category.probability}%</ListGroup.Item>
+-                  );
+-              })}
+-              </ListGroup>
+-            </div>
+-          }
+-          </Fragment>
+-        }
++              </div>
++              {!cameraReady && <div><Button onClick={this.startCamera} disabled={disabled || cameraStarting}>
++                {cameraStarting ? 'Starting camera…' : 'Start camera'}
++              </Button></div>}
++            </Tab>
++            <Tab eventKey="localfile" title="Select image" disabled={disabled}>
++              <Form.Group controlId="assay-image">
++                <Form.Label>Select an assay image</Form.Label>
++                <Form.Control type="file" accept="image/*" disabled={disabled} onChange={this.selectFile} />
++              </Form.Group>
++              {file && <Cropper key={file} ref={this.cropperRef} src={file}
++                style={{ height: 500, width: 281.25, maxWidth: '100%' }}
++                guides={false} aspectRatio={9 / 16} viewMode={2}
++                ready={() => this.active && this.setState({ imageReady: true })} />}
++              {filename && <p>{filename}</p>}
++            </Tab>
++          </Tabs>
++          <div className="button-container">
++            <LoadButton onClick={this.classify} isLoading={classifying}
++              disabled={loading || (tab === 'camera' ? !cameraReady : !imageReady)}
++              text="Classify" loadingText="Classifying…" />
++          </div>
++          </div>
++          {result && <section ref={this.resultRef} tabIndex={-1}
++            className="classification-results" aria-label="Classification results" aria-live="polite">
++            <h3>Prediction</h3>
++            <img src={result.preview} alt="Detected assay region" style={{ maxWidth: '100%' }} />
++            <ListGroup>{result.predictions.map(prediction => (
++              <ListGroup.Item key={prediction.className}>
++                <strong>{prediction.className}</strong> {prediction.probability}%
++              </ListGroup.Item>
++            ))}</ListGroup>
++          </section>}
++        </Fragment>}
+       </div>
+     );
+   }
+--- original/src/pages/NotFound.js
++++ refactored/src/pages/NotFound.js
+@@ -4,9 +4,11 @@
+ /**
+  * This is rendered when a route is not found (404).
+  */
+-export default () =>
++const NotFound = () =>
+   <div className="NotFound">
+     <h1>404</h1>
+     <h3>Not Found!</h3>
+     <a href="/">Go Home/Refresh</a>
+   </div>;
++
++export default NotFound;
+--- original/src/serviceWorker.js
++++ refactored/src/serviceWorker.js
+@@ -1,107 +1,56 @@
+-
+-const isLocalhost = Boolean(
+-  window.location.hostname === 'localhost' ||
+-    window.location.hostname === '[::1]' ||
+-    window.location.hostname.match(
+-      /^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/
+-    )
+-);
+-
+-export function register(config) {
+-  if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
+-    const publicUrl = new URL(process.env.PUBLIC_URL, window.location.href);
+-    if (publicUrl.origin !== window.location.origin) {
+-      return;
+-    }
+-
+-    window.addEventListener('load', () => {
+-      const swUrl = `${process.env.PUBLIC_URL}/service-worker.js`;
+-      
+-      // const swUrl = `/serviceWorker.js`;
+-
+-      if (isLocalhost) {
+-        checkValidServiceWorker(swUrl, config);
+-
+-        navigator.serviceWorker.ready.then(() => {
+-          console.log(
+-            'Service Worker is working '
+-          );
+-        });
+-      } else {
+-        registerValidSW(swUrl, config);
++/** Report offline availability only after the worker confirms every asset. */
++export function register(onStatus) {
++  if (process.env.NODE_ENV !== 'production') return () => {};
++  if (!('serviceWorker' in navigator) || !window.isSecureContext) {
++    onStatus('Offline mode requires HTTPS and service-worker support.');
++    return () => {};
++  }
++  let disposed = false;
++  let registration;
++  let channel;
++  let timer;
++  const report = text => { if (!disposed) onStatus(text); };
++  const check = async () => {
++    if (disposed) return;
++    const worker = navigator.serviceWorker.controller || (registration && registration.active);
++    if (!worker) return;
++    if (channel) channel.port1.close();
++    clearTimeout(timer);
++    channel = new MessageChannel();
++    channel.port1.onmessage = event => {
++      clearTimeout(timer);
++      channel.port1.close();
++      report(event.data.ready ? 'Ready for offline use' : 'Offline files are incomplete. Reconnect and reload.');
++    };
++    timer = setTimeout(() => report('Offline readiness could not be confirmed. Reconnect and reload.'), 15000);
++    worker.postMessage({ type: 'OFFLINE_STATUS' }, [channel.port2]);
++  };
++  const watch = worker => {
++    if (!worker) return;
++    worker.addEventListener('statechange', () => {
++      if (worker.state === 'activated') check();
++      if (worker.state === 'installed' && registration.active) {
++        report('Update downloaded. Close all app tabs and reopen to use it.');
+       }
++      if (worker.state === 'redundant') report('Offline download failed. Reconnect and reload to retry.');
+     });
+-  }
++  };
++  report('Preparing offline use — keep this page open while files download.');
++  navigator.serviceWorker.addEventListener('controllerchange', check);
++  navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
++    .then(value => {
++      if (disposed) return;
++      registration = value;
++      watch(registration.installing);
++      registration.addEventListener('updatefound', () => watch(registration.installing));
++      if (registration.waiting) report('Update downloaded. Close all app tabs and reopen to use it.');
++      else if (registration.active) check();
++    })
++    .catch(() => report('Offline setup failed. Check your connection and reload.'));
++  return () => {
++    disposed = true;
++    clearTimeout(timer);
++    if (channel) channel.port1.close();
++    navigator.serviceWorker.removeEventListener('controllerchange', check);
++  };
+ }
+-
+-function registerValidSW(swUrl, config) {
+-  navigator.serviceWorker
+-    .register(swUrl)
+-    .then(registration => {
+-      if (registration.waiting && registration.active) {
+-        newerSwAvailable(registration.waiting);
+-      }
+-      registration.onupdatefound = () => {
+-        const installingWorker = registration.installing;
+-        if (installingWorker == null) {
+-          return;
+-        }
+-        installingWorker.onstatechange = () => {
+-          if (installingWorker.state === 'installed') {
+-            if (navigator.serviceWorker.controller) {
+-              newerSwAvailable(installingWorker);
+-            } else {
+-              console.log('Content is saved for offline use.');
+-
+-              if (config && config.onSuccess) {
+-                config.onSuccess(registration);
+-              }
+-            }
+-          }
+-        };
+-      };
+-      function newerSwAvailable(sw){
+-        console.log(
+-          'New update is available ' 
+-        );
+-        if (config && config.onUpdate) {
+-          config.onUpdate(registration, sw);
+-        }
+-      }
+-    })
+-    .catch(error => {
+-      console.error('Error Service Worker Registration:', error);
+-    });
+-}
+-
+-function checkValidServiceWorker(swUrl, config) {
+-  fetch(swUrl)
+-    .then(response => {
+-      const contentType = response.headers.get('content-type');
+-      if (
+-        response.status === 404 ||
+-        (contentType != null && contentType.indexOf('javascript') === -1)
+-      ) {
+-        navigator.serviceWorker.ready.then(registration => {
+-          registration.unregister().then(() => {
+-            window.location.reload();
+-          });
+-        });
+-      } else {
+-        registerValidSW(swUrl, config);
+-      }
+-    })
+-    .catch(() => {
+-      console.log(
+-        'Offline mode.'
+-      );
+-    });
+-}
+-
+-export function unregister() {
+-  if ('serviceWorker' in navigator) {
+-    navigator.serviceWorker.ready.then(registration => {
+-      registration.unregister();
+-    });
+-  }
+-}

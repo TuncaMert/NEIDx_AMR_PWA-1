@@ -1,109 +1,56 @@
-
-const isLocalhost = Boolean(
-  window.location.hostname === 'localhost' ||
-    window.location.hostname === '[::1]' ||
-    window.location.hostname.match(
-      /^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/
-    )
-);
-
-export function register(config) {
-  if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
-    const publicUrl = new URL(process.env.PUBLIC_URL, window.location.href);
-    if (publicUrl.origin !== window.location.origin) {
-      return;
-    }
-
-    window.addEventListener('load', () => {
-      const swUrl = `${process.env.PUBLIC_URL}/service-worker.js`;
-
-      if (isLocalhost) {
-        checkValidServiceWorker(swUrl, config);
-
-        navigator.serviceWorker.ready.then(() => {
-          console.log(
-            'Service Worker is working '
-          );
-        });
-      } else {
-        registerValidSW(swUrl, config);
-      }
-    });
+/** Report offline availability only after the worker confirms every asset. */
+export function register(onStatus) {
+  if (process.env.NODE_ENV !== 'production') return () => {};
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) {
+    onStatus('Offline mode requires HTTPS and service-worker support.');
+    return () => {};
   }
-}
-
-function registerValidSW(swUrl, config) {
-  navigator.serviceWorker
-    .register(swUrl)
-    .then(registration => {
-      if (registration.waiting && registration.active) {
-        newerSwAvailable(registration.waiting);
+  let disposed = false;
+  let registration;
+  let channel;
+  let timer;
+  const report = text => { if (!disposed) onStatus(text); };
+  const check = async () => {
+    if (disposed) return;
+    const worker = navigator.serviceWorker.controller || (registration && registration.active);
+    if (!worker) return;
+    if (channel) channel.port1.close();
+    clearTimeout(timer);
+    channel = new MessageChannel();
+    channel.port1.onmessage = event => {
+      clearTimeout(timer);
+      channel.port1.close();
+      report(event.data.ready ? 'Ready for offline use' : 'Offline files are incomplete. Reconnect and reload.');
+    };
+    timer = setTimeout(() => report('Offline readiness could not be confirmed. Reconnect and reload.'), 15000);
+    worker.postMessage({ type: 'OFFLINE_STATUS' }, [channel.port2]);
+  };
+  const watch = worker => {
+    if (!worker) return;
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'activated') check();
+      if (worker.state === 'installed' && registration.active) {
+        report('Update downloaded. Close all app tabs and reopen to use it.');
       }
-      registration.onupdatefound = () => {
-        const installingWorker = registration.installing;
-        if (installingWorker == null) {
-          return;
-        }
-        installingWorker.onstatechange = () => {
-          if (installingWorker.state === 'installed') {
-            if (navigator.serviceWorker.controller) {
-              newerSwAvailable(installingWorker);
-            } else {
-              console.log('Content is saved for offline use.');
-
-              if (config && config.onSuccess) {
-                config.onSuccess(registration);
-              }
-            }
-          }
-        };
-      };
-      function newerSwAvailable(sw){
-        console.log(
-          'New update is available ' 
-        );
-        if (config && config.onUpdate) {
-          config.onUpdate(registration, sw);
-        }
-      }
+      if (worker.state === 'redundant') report('Offline download failed. Reconnect and reload to retry.');
+    });
+  };
+  report('Preparing offline use — keep this page open while files download.');
+  navigator.serviceWorker.addEventListener('controllerchange', check);
+  navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
+    .then(value => {
+      if (disposed) return;
+      registration = value;
+      watch(registration.installing);
+      registration.addEventListener('updatefound', () => watch(registration.installing));
+      if (registration.waiting) report('Update downloaded. Close all app tabs and reopen to use it.');
+      else if (registration.active) check();
     })
-    .catch(error => {
-      console.error('Error Service Worker Registration:', error);
-    });
-}
-
-function checkValidServiceWorker(swUrl, config) {
-  // Check if the service worker can be found. If it can't reload the page.
-  fetch(swUrl)
-    .then(response => {
-      // Ensure service worker exists, and that we really are getting a JS file.
-      const contentType = response.headers.get('content-type');
-      if (
-        response.status === 404 ||
-        (contentType != null && contentType.indexOf('javascript') === -1)
-      ) {
-        // No service worker found. Probably a different app. Reload the page.
-        navigator.serviceWorker.ready.then(registration => {
-          registration.unregister().then(() => {
-            window.location.reload();
-          });
-        });
-      } else {
-        // Service worker found. Proceed as normal.
-        registerValidSW(swUrl, config);
-      }
-    })
-    .catch(() => {
-      console.log(
-        'Offline mode.'
-      );
-    });
-}
-
-export function unregister() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.ready.then(registration => {
-      registration.unregister();
-    });
-  }
+    .catch(() => report('Offline setup failed. Check your connection and reload.'));
+  return () => {
+    disposed = true;
+    clearTimeout(timer);
+    if (channel) channel.port1.close();
+    navigator.serviceWorker.removeEventListener('controllerchange', check);
+  };
 }
